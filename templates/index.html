@@ -1,1 +1,122 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>토스 미국주식 급등주 스캐너 v2</title>
+<style>
+:root{--bg:#0f1115;--card:#181b21;--line:#2a2e37;--muted:#979dac;--good:#42d98b;--bad:#ff6b6b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:#f5f6f8;font-family:system-ui,-apple-system,sans-serif}
+.wrap{max-width:760px;margin:auto;padding:24px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:22px;margin:18px 0}
+h1{font-size:32px;margin:8px 0}
+.sub,.note{color:var(--muted)}
+textarea,input{width:100%;background:#111319;color:white;border:1px solid var(--line);border-radius:15px;padding:16px;font-size:18px}
+textarea{min-height:130px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.grid label{color:var(--muted)}
+button{width:100%;border:0;border-radius:18px;padding:20px;font-size:22px;font-weight:800;margin:8px 0}
+.result h2{display:flex;justify-content:space-between;gap:10px}
+.price{font-size:38px;font-weight:800}
+.good{color:var(--good)} .bad{color:var(--bad)}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stat{background:#111319;border-radius:14px;padding:14px}
+.badge{font-size:14px;padding:6px 10px;border-radius:999px;background:#252a33}
+.pass{color:var(--good)} .fail{color:var(--bad)}
+.checks{margin-top:12px;display:flex;gap:7px;flex-wrap:wrap}
+.tiny{font-size:12px;color:var(--muted);margin-top:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>토스 미국주식 급등주 스캐너 v2</h1>
+<div class="sub">당일 누적 거래량 · RVOL · VWAP · 조건 통과/미달 표시</div>
 
+<div class="card">
+<h2>감시 종목</h2>
+<textarea id="symbols">BOXL
+BAOS
+XHLD</textarea>
+</div>
+
+<div class="card grid">
+<label>최소 상승률 %<input id="minChange" type="number" value="10"></label>
+<label>최소 RVOL<input id="minRvol" type="number" step=".1" value="3"></label>
+<label>최소 거래량<input id="minVolume" type="number" value="1000000"></label>
+<label>손절 %<input id="stop" type="number" value="3"></label>
+<label>1차 익절 %<input id="tp1" type="number" value="5"></label>
+<label>2차 익절 %<input id="tp2" type="number" value="10"></label>
+<label style="grid-column:1/-1;color:white">
+<input id="aboveVwap" type="checkbox" checked style="width:auto"> VWAP 위일 때만 통과
+</label>
+</div>
+
+<button id="scan">지금 스캔</button>
+<div id="status" class="sub"></div>
+<div id="results"></div>
+
+<p class="note">※ 공개 시세를 사용하므로 토스증권의 데이마켓/시간외 수치와 완전히 같지 않을 수 있습니다. 실제 주문 전 토스 현재가·호가를 확인하세요.</p>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const fmt=n=>n==null?"-":Number(n).toLocaleString(undefined,{maximumFractionDigits:2});
+
+$("scan").onclick=async()=>{
+  $("status").textContent="스캔 중…";
+  $("results").innerHTML="";
+  const symbols=$("symbols").value.split(/[\s,]+/).filter(Boolean);
+  const settings={
+    minChange:+$("minChange").value,
+    minRvol:+$("minRvol").value,
+    minVolume:+$("minVolume").value,
+    aboveVwap:$("aboveVwap").checked
+  };
+
+  try{
+    const r=await fetch("/api/scan",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({symbols,settings})
+    });
+    const data=await r.json();
+    $("status").textContent="스캔 완료 · "+new Date().toLocaleTimeString();
+
+    data.results.forEach(x=>{
+      const d=document.createElement("div");
+      d.className="card result";
+
+      if(x.error){
+        d.innerHTML=`<h2>${x.symbol}<span class="fail">오류</span></h2><div class="bad">${x.error}</div>`;
+      }else{
+        const stop=x.price*(1-$("stop").value/100);
+        const tp1=x.price*(1+$("tp1").value/100);
+        const tp2=x.price*(1+$("tp2").value/100);
+        const checks=Object.entries(x.checks)
+          .map(([k,v])=>`<span class="badge ${v?'pass':'fail'}">${v?'✓':'✕'} ${k}</span>`).join("");
+
+        d.innerHTML=`
+          <h2>${x.symbol}<span class="${x.passed?'pass':'fail'}">${x.passed?'조건 통과':'조건 미달'}</span></h2>
+          <div class="price">$${fmt(x.price)}</div>
+          <div class="${x.change>=0?'good':'bad'}">${x.change==null?'-':(x.change>=0?'+':'')+fmt(x.change)+'%'}</div>
+          <div class="stats">
+            <div class="stat">당일 누적 거래량<br><b>${fmt(x.volume)}</b></div>
+            <div class="stat">RVOL<br><b>${fmt(x.rvol)}x</b></div>
+            <div class="stat">VWAP<br><b>$${fmt(x.vwap)}</b></div>
+            <div class="stat">위치<br><b>${x.above_vwap?'VWAP 위':'VWAP 아래'}</b></div>
+            <div class="stat">손절<br><b>$${fmt(stop)}</b></div>
+            <div class="stat">1차 / 2차 익절<br><b>$${fmt(tp1)} / $${fmt(tp2)}</b></div>
+          </div>
+          <div class="checks">${checks}</div>
+          <div class="tiny">공개 Yahoo 시세 · ${x.updated}</div>`;
+      }
+      $("results").appendChild(d);
+    });
+  }catch(e){
+    $("status").textContent="오류: "+e.message;
+  }
+};
+</script>
+</body>
+</html>
